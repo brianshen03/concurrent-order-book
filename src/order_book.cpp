@@ -26,7 +26,7 @@ std::vector<Trade> OrderBook::order_match(Order& o) {
     std::vector<Trade> trades;
     Side side = o.side;
     int price = o.price;
-
+    
 
     if (side == Side::BID) {
 

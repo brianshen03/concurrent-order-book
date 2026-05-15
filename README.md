@@ -1,4 +1,4 @@
-# Project Proposal: Synchronization Strategies in a High-Throughput Order Book
+# Synchronization Strategies in a High-Throughput Order Book
 
 ## Introduction
 This project studies how different synchronization strategies affect the performance of a high-throughput limit order book. I will implement multiple concurrent designs in C++ and benchmark their scalability under controlled workloads. The goal is to understand how contention impacts throughput and latency in a shared-state system.
