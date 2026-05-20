@@ -1,0 +1,9 @@
+main
+tests
+bench_runs.csv
+bench_scaling.csv
+bench_workload.csv
+# plots/ — kept in git
+__pycache__/
+*.o
+*.d

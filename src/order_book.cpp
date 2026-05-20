@@ -1,218 +1,115 @@
 #include "order_book.h"
+#include <algorithm>
+#include <climits>
 
+OrderBook::OrderBook(int min_price, int max_price)
+    : min_price(min_price), max_price(max_price),
+      bids(max_price - min_price + 1),
+      asks(max_price - min_price + 1) {}
 
 std::vector<Trade> OrderBook::submit(Order o) {
-
-    OrderType order_type = o.order_type;
-
-    switch(order_type) {
-        case OrderType::LIMIT:
-            return order_limit(o);
-        case OrderType::MARKET:
-            return order_market(o);
-        case OrderType::CANCEL:
-            order_cancel(o.id);
-            break;
-        default:
-            return {};
+    switch (o.order_type) {
+        case OrderType::LIMIT:  return order_limit(o);
+        case OrderType::MARKET: return order_market(o);
+        case OrderType::CANCEL: order_cancel(o.id); break;
+        default: return {};
     }
     return {};
 }
 
-//core matching logic 
 std::vector<Trade> OrderBook::order_match(Order& o) {
-
-    int remaining_qty = o.qty;
     std::vector<Trade> trades;
-    Side side = o.side;
-    int price = o.price;
-    
 
-    if (side == Side::BID) {
+    if (o.side == Side::BID) {
+        int p_max = std::min(o.price, max_price);
+        for (int p = min_price; p <= p_max && o.qty > 0; p++) {
+            auto& level = asks[p - min_price];
+            while (o.qty > 0 && !level.empty()) {
+                Order& resting = level.front();
+                int filled = std::min(o.qty, resting.qty);
+                o.qty -= filled;
+                resting.qty -= filled;
 
-        auto it = asks.begin();
+                Trade t;
+                t.ask_order_id = resting.id;
+                t.bid_order_id = o.id;
+                t.price = resting.price;
+                t.qty = filled;
+                t.timestamp = o.timestamp;
+                trades.push_back(t);
 
-        while (remaining_qty > 0 && !asks.empty() && it->first <= price) {
-            int filled = std::min(remaining_qty, it->second.front().qty);
-            remaining_qty -= filled;
-            it->second.front().qty -= filled;
-
-            //update order map
-            if (it->second.front().qty == 0) {
-                order_map.erase(it->second.front().id);
-            } else {
-                order_map[it->second.front().id].qty -= filled;
-            }
-            
-            //record trade and push it into vector 
-            Trade t;
-            t.ask_order_id = it->second.front().id;
-            t.bid_order_id = o.id;
-            t.price = it->second.front().price;
-            t.qty = filled;
-            t.timestamp = o.timestamp;
-            trades.push_back(t);
-
-            //move onto next order at price level OR next price level 
-            if (it->second.front().qty == 0) {
-                it->second.pop();
-
-                //if exists another entry in queue, move onto that entry
-                if (it->second.empty()) {
-                    it = asks.erase(it);
+                if (resting.qty == 0) {
+                    order_map.erase(resting.id);
+                    level.pop();
+                } else {
+                    order_map[resting.id].qty -= filled;
                 }
-                //else move onto next price level 
             }
-        }
-
-        if (remaining_qty > 0) {
-
         }
     } else {
+        int p_min = std::max(o.price, min_price);
+        for (int p = max_price; p >= p_min && o.qty > 0; p--) {
+            auto& level = bids[p - min_price];
+            while (o.qty > 0 && !level.empty()) {
+                Order& resting = level.front();
+                int filled = std::min(o.qty, resting.qty);
+                o.qty -= filled;
+                resting.qty -= filled;
 
-        auto it = bids.begin();
+                Trade t;
+                t.ask_order_id = o.id;
+                t.bid_order_id = resting.id;
+                t.price = resting.price;
+                t.qty = filled;
+                t.timestamp = o.timestamp;
+                trades.push_back(t);
 
-        while (remaining_qty > 0 && !bids.empty() && it->first >= price) {
-            int filled = std::min(remaining_qty, it->second.front().qty);
-            remaining_qty -= filled;
-            it->second.front().qty -= filled;
-
-            if (it->second.front().qty == 0) {
-                order_map.erase(it->second.front().id);
-            } else {
-                order_map[it->second.front().id].qty -= filled;
-            }
-            
-            Trade t;
-            t.ask_order_id = o.id;
-            t.bid_order_id = it->second.front().id;
-            t.price = it->second.front().price;
-            t.qty = filled;
-            t.timestamp = o.timestamp;
-            trades.push_back(t);
-
-            if (it->second.front().qty == 0) {
-                it->second.pop();
-
-                if (it->second.empty()) {
-                    it = bids.erase(it);
+                if (resting.qty == 0) {
+                    order_map.erase(resting.id);
+                    level.pop();
+                } else {
+                    order_map[resting.id].qty -= filled;
                 }
             }
         }
-
     }
-    
+
     return trades;
 }
 
-
-//Limit Order
-// "I want to buy/sell X shares, but only at a specific price or better."
 std::vector<Trade> OrderBook::order_limit(Order o) {
-
-    int price = o.price;
-    Side side = o.side;
-    std::vector<Trade> trades;
-
-    if (side == Side::BID) {
-        //check if there is a matching price on other side 
-        auto it = asks.begin();
-
-        //YES - can be matched 
-        if (!asks.empty() && it->first <= price) {
-            trades = order_match(o);
-            if (o.qty > 0) {
-                bids[price].push(o);
-                order_map[o.id] = o;
-            }
-        } else {
-            //can NOT be matched, add to buy order book 
-            //find right price level and add to back of queue 
-            bids[price].push(o);
-            order_map[o.id] = o;
-        }
-    } else {
-        auto it = bids.begin();
-        if (!bids.empty() && it->first >= price) {
-            trades = order_match(o);
-            if (o.qty > 0) {
-                asks[price].push(o);
-                order_map[o.id] = o;
-            }
-        } else {
-            asks[price].push(o);
-            order_map[o.id] = o;
-        }
+    std::vector<Trade> trades = order_match(o);
+    if (o.qty > 0) {
+        int idx = o.price - min_price;
+        if (o.side == Side::BID)
+            bids[idx].push(o);
+        else
+            asks[idx].push(o);
+        order_map[o.id] = o;
     }
-
     return trades;
 }
 
-//Market Order
-// "I want to buy/sell X shares right now at whatever price is available."
 std::vector<Trade> OrderBook::order_market(Order o) {
-
-    Side side = o.side;
-
-    if (side == Side::BID) {
-        o.price = INT_MAX;
-    } else {
-        o.price = 0;
-    }
-
+    o.price = (o.side == Side::BID) ? INT_MAX : 0;
     return order_match(o);
 }
 
-//cancel order 
-//removes existing order from the book 
 void OrderBook::order_cancel(int order_id) {
+    auto it = order_map.find(order_id);
+    if (it == order_map.end()) return;
 
-    //if order_id does not exist 
-    if (order_map.find(order_id) == order_map.end()) {
-        return;
+    Order o = it->second;
+    order_map.erase(it);
+
+    int idx = o.price - min_price;
+    auto& level = (o.side == Side::BID) ? bids[idx] : asks[idx];
+
+    std::queue<Order> temp;
+    while (!level.empty()) {
+        Order current = level.front();
+        level.pop();
+        if (current.id != o.id) temp.push(current);
     }
-
-    //remove order from id map 
-    Order o = order_map[order_id];
-    order_map.erase(order_id);
-
-    Side side = o.side;
-    int price = o.price;
-
-    if (side == Side::BID) {
-        //find element in queue and remove it 
-        std::queue<Order> temp;
-        while (!bids[price].empty()) {
-            Order current = bids[price].front();
-            bids[price].pop();
-            if (current.id != o.id) {
-                temp.push(current);
-            }
-
-        }
-        //repopulate original queue
-        if (temp.empty()) {
-            bids.erase(price);
-        } else bids[price] = temp;
-    } else {
-        std::queue<Order> temp;
-        while (!asks[price].empty()) {
-            Order current = asks[price].front();
-            asks[price].pop();
-
-            if (current.id != o.id) {
-                temp.push(current);
-            }
-        }
-        //repopulate original queue
-        if (temp.empty()) {
-            asks.erase(price);
-        } else asks[price] = temp;
-    }
+    level = std::move(temp);
 }
-
-
-
-
-
-

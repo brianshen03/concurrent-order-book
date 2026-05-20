@@ -1,41 +1,79 @@
-# Synchronization Strategies in a High-Throughput Order Book
+# Concurrent Order Book
 
-## Introduction
-This project studies how different synchronization strategies affect the performance of a high-throughput limit order book. I will implement multiple concurrent designs in C++ and benchmark their scalability under controlled workloads. The goal is to understand how contention impacts throughput and latency in a shared-state system.
+A C++ limit order book benchmarked across five concurrency strategies to understand how synchronization choices affect throughput and latency at scale.
 
-## Problem
-Order matching systems must process large volumes of events while preserving strict ordering constraints. This creates a tension between correctness and parallelism.
+## What it does
 
-This project asks: How do different synchronization strategies scale under increasing concurrency and contention?
+Implements a price-time priority order book supporting limit, market, and cancel orders. Five designs are benchmarked against 1M synthetic orders per run:
 
-## Approach
-We build a limit order book supporting:
-- Limit, market, and cancel orders
-- Price-time priority matching
+| Strategy | Description |
+|---|---|
+| **Sequential** | Single thread, no synchronization |
+| **Mutex** | 4 threads, one mutex per symbol |
+| **Queue** | 4 producer threads feed a single shared `ConcurrentQueue`; one consumer thread |
+| **Per-Symbol** | One thread per symbol, no sharing |
+| **Per-Symbol Queue** | 4 producers route to per-symbol queues; one consumer per symbol |
 
-We compare three designs:
-1. Single-threaded baseline
-2. Mutex-based implementation
-3. Queue-based / parallel ingestion design
+Two additional experiments are run after the main benchmarks:
 
-Synthetic order streams are generated with controllable:
-- Order mix
-- Arrival rate
-- Book depth
+- **Scaling analysis** — per-symbol thread count swept 1→2→4→8, total order count scales proportionally
+- **Workload mix sweep** — limit-heavy (80/10/10), default (60/20/20), and market-heavy (20/70/10) mixes compared at fixed thread count
 
-## Evaluation
-We benchmark across:
-- Thread count
-- Workload type
-- Contention level
+## Results (sample)
 
-Metrics:
-- Throughput (orders/sec)
-- Latency (p50 / p95 / p99)
-- Scaling efficiency
+```
+Strategy          Peak Throughput
+Sequential        ~7M orders/sec
+Mutex             ~3.5M orders/sec  (contention hurts)
+Queue             ~4.5M orders/sec
+Per-Symbol        ~22M orders/sec   (3x over sequential)
+Per-Symbol Queue  ~6M orders/sec    (queue overhead dominates)
+```
 
-## Expected Outcome
-We expect to identify:
-- When locking becomes a bottleneck
-- How different designs scale with load
-- Tradeoffs between simplicity, correctness, and performance
+Per-symbol parallelism wins because each thread owns its order book exclusively — no locks, no shared state. Mutex-based threading actually regresses below sequential because all four threads compete for the same four locks.
+
+## Build
+
+Requires a C++17 compiler and `make`.
+
+```bash
+make          # builds ./main and ./tests
+make bench    # builds, runs benchmark, generates plots
+make clean    # removes binaries, CSVs, and plots
+```
+
+Running tests:
+```bash
+./tests
+```
+
+## Reproducing the benchmark
+
+```bash
+./main        # runs all benchmarks, writes bench_*.csv
+python3 plot.py   # reads CSVs, writes plots/*.png
+```
+
+Requires Python 3 with `pandas`, `matplotlib`, and `numpy`:
+```bash
+pip install pandas matplotlib numpy
+```
+
+Plots are saved to `plots/`:
+- `throughput.png` — peak throughput per strategy
+- `latency.png` — p50/p95/p99 latency per strategy
+- `scaling.png` — sequential vs parallel throughput as thread count grows
+- `workload.png` — throughput by order mix, sequential vs parallel
+
+## Project structure
+
+```
+src/
+  order_book.h/cpp       — price-time priority matching engine
+  order_generator.h/cpp  — synthetic order stream generator
+  concurrent_queue.h     — blocking MPSC queue (mutex + condition variable)
+  main.cpp               — benchmark harness
+  tests.cpp              — unit tests for order book correctness
+plot.py                  — reads bench_*.csv, writes plots/*.png
+Makefile
+```

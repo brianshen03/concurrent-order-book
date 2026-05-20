@@ -3,6 +3,7 @@
 
 #include "types.h"
 #include <vector>
+#include <unordered_map>
 
 
 class OrderGenerator {
@@ -10,7 +11,7 @@ class OrderGenerator {
         std::vector<Order> generate();
         OrderGenerator(int num_orders, int mid_price, float spread, 
                int min_qty, int max_qty, 
-               float limit_pct, float market_pct, float cancel_pct);
+               float limit_pct, float market_pct, float cancel_pct, std::vector<std::string> symbols);
     private:
         int num_orders;
         //price distribution to center around 
@@ -23,7 +24,10 @@ class OrderGenerator {
         float limit_pct;
         float market_pct;
         float cancel_pct;
-        std::vector<int> active_ids;
+
+        std::vector<std::string> symbols;
+        //tracks which limit orders are live, so the generator can produce valid cancel orders 
+        std::vector<std::pair<int, std::string>> active_ids;
 
 };
 

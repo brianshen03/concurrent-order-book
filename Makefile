@@ -1,11 +1,20 @@
 CXX = g++
 CXXFLAGS = -std=c++17 -O2
 
-SRCS = src/main.cpp src/order_book.cpp src/order_generator.cpp
-TARGET = main
+SHARED = src/order_book.cpp src/order_generator.cpp
 
-$(TARGET): $(SRCS)
-	$(CXX) $(CXXFLAGS) $(SRCS) -o $(TARGET)
+all: main tests
+
+main: src/main.cpp $(SHARED)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
+tests: src/tests.cpp $(SHARED)
+	$(CXX) $(CXXFLAGS) $^ -o $@
+
+bench: main
+	./main
+	python3 plot.py
 
 clean:
-	rm -rf $(TARGET)
+	rm -f main tests bench_runs.csv bench_scaling.csv bench_workload.csv
+	rm -rf plots/
