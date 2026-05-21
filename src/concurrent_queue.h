@@ -7,6 +7,8 @@
 #include <condition_variable>
 #include <atomic>
 
+// MPMC blocking queue. Intended use: multiple producer threads push orders;
+// one or more consumer threads pop until shutdown() is called.
 class ConcurrentQueue {
 public:
     void push(Order o) {
@@ -14,8 +16,9 @@ public:
         cv.notify_one();
     }
 
-    // Blocks until an item is available or shutdown. Returns false when
-    // shutdown and queue is empty (signals consumer to exit).
+    // Blocks until an item is available or shutdown is signalled.
+    // Returns false only when the queue is empty and shutdown has been called —
+    // the consumer's cue to exit.
     bool pop(Order& o) {
         std::unique_lock<std::mutex> lock(mtx);
         cv.wait(lock, [&]{ return !q.empty() || done.load(); });
@@ -25,6 +28,7 @@ public:
         return true;
     }
 
+    // One-way: once shut down the queue cannot be restarted.
     void shutdown() {
         done = true;
         cv.notify_all();

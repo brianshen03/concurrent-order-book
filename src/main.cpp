@@ -17,6 +17,8 @@ using SymOrders = std::unordered_map<std::string, std::vector<Order>>;
 
 // ─── helpers ────────────────────────────────────────────────────────────────
 
+// Sorts latencies in-place as a side effect; callers rely on this ordering
+// before passing the vector to write_run_csv.
 void print_latency_stats(std::vector<long>& latencies) {
     std::sort(latencies.begin(), latencies.end());
     size_t n = latencies.size();
@@ -45,6 +47,9 @@ void write_run_csv(std::ofstream& csv, const std::string& strategy, int r,
 
 // ─── thread workers ─────────────────────────────────────────────────────────
 
+// Strategy: per-symbol mutex. Threads race on a shared order list; each
+// acquires only the lock for its order's symbol, allowing concurrent execution
+// across different symbols.
 void process_range(std::unordered_map<std::string, OrderBook>& books,
                    std::unordered_map<std::string, std::mutex>& mutexes,
                    const std::vector<Order>& orders, int start, int end,
@@ -61,6 +66,8 @@ void process_range(std::unordered_map<std::string, OrderBook>& books,
     }
 }
 
+// Strategy: single shared queue. Multiple producers push into one queue;
+// a single consumer serializes all book access — no locking needed on books.
 void producer(ConcurrentQueue& q, const std::vector<Order>& orders, int start, int end) {
     for (int i = start; i < end; i++) q.push(orders[i]);
 }
@@ -77,6 +84,8 @@ void consumer(std::unordered_map<std::string, OrderBook>& books, ConcurrentQueue
     }
 }
 
+// Strategy: per-symbol queue. Producers route each order to its symbol's queue;
+// each symbol has a dedicated consumer, so books are never shared between threads.
 void symbol_producer(std::unordered_map<std::string, ConcurrentQueue*>& queues,
                      const std::vector<Order>& orders, int start, int end) {
     for (int i = start; i < end; i++) queues[orders[i].symbol]->push(orders[i]);
@@ -268,6 +277,7 @@ void run_per_symbol_queue(const std::vector<std::string>& symbols,
         std::unordered_map<std::string, OrderBook> books;
         for (const auto& s : symbols) { queues[s]; books.try_emplace(s, 950, 1050); }
 
+        // ConcurrentQueue is not copyable, so store raw pointers for the producer API.
         std::unordered_map<std::string, ConcurrentQueue*> queue_ptrs;
         for (const auto& s : symbols) queue_ptrs[s] = &queues[s];
 
@@ -487,7 +497,8 @@ int main() {
     SymOrders symbol_orders;
     for (const auto& o : orders) symbol_orders[o.symbol].push_back(o);
 
-    // Warmup
+    // Warmup: prime the instruction cache and amortize initial allocations
+    // so the first benchmark run isn't penalised relative to subsequent ones.
     {
         std::unordered_map<std::string, OrderBook> warmup_books;
         for (const auto& s : symbols) warmup_books.try_emplace(s, 950, 1050);

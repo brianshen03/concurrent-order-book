@@ -15,7 +15,7 @@ OrderGenerator::OrderGenerator(
 std::vector<Order> OrderGenerator::generate() {
     std::vector<Order> orders;
     std::mt19937 rng(std::random_device{}());
-    
+
     std::uniform_int_distribution<int> price_dist(mid_price - spread, mid_price + spread);
     std::uniform_int_distribution<int> qty_dist(min_qty, max_qty);
     std::uniform_real_distribution<float> type_dist(0.0f, 1.0f);
@@ -29,17 +29,21 @@ std::vector<Order> OrderGenerator::generate() {
         Order o;
         o.timestamp = i;
 
+        // CANCEL is checked first but guarded by active_ids being non-empty.
+        // If no live orders exist yet, the roll falls through to LIMIT instead,
+        // so the actual cancel rate may be slightly lower early in the sequence.
         if (!active_ids.empty() && roll >= limit_pct + market_pct) {
-            // CANCEL — pick a random active order
+            // CANCEL — pick a random active limit order
             std::uniform_int_distribution<int> id_dist(0, active_ids.size() - 1);
             int idx = id_dist(rng);
 
             o.id = active_ids[idx].first;
             o.symbol = active_ids[idx].second;
+            // Swap-and-pop: O(1) removal without shifting the vector.
             active_ids[idx] = active_ids.back();
             active_ids.pop_back();
             o.order_type = OrderType::CANCEL;
-            o.side = Side::BID; // doesn't matter for cancel
+            o.side = Side::BID; // ignored by OrderBook for cancels
             o.price = 0;
             o.qty = 0;
 
@@ -54,7 +58,7 @@ std::vector<Order> OrderGenerator::generate() {
             active_ids.emplace_back(o.id, o.symbol);
 
         } else {
-            // MARKET
+            // MARKET — not added to active_ids since market orders never rest in the book
             o.symbol = symbols[symbol_dist(rng)];
             o.id = next_id++;
             o.order_type = OrderType::MARKET;
